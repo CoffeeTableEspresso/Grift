@@ -418,6 +418,7 @@ The type rules for core forms that have interesting type rules
 (define (application-type-rule t-rator t-rand* src)
   (match (unfold-possible-mu t-rator)
     [(Dyn) (Dyn)]
+    [(Any _) (Dyn)] ; TODO this should be (ret-type (Any n))
     [(Fn arity t-fml* t-ret)
      (unless (= arity (length t-rand*))
        (error
@@ -519,6 +520,7 @@ The type rules for core forms that have interesting type rules
 (define (gbox-set!-type-rule box-ty val-ty)
   (match box-ty
     [(Dyn) UNIT-TYPE]
+    [(Any _) UNIT-TYPE]
     [(GRef g)
      (if (consistent? g val-ty)
          UNIT-TYPE
@@ -594,6 +596,7 @@ The type rules for core forms that have interesting type rules
   (if (consistent? index-ty INT-TYPE)
       (match vect-ty
         [(Dyn) UNIT-TYPE]
+        [(Any _) UNIT-TYPE]
         [(GVect g) (if (consistent? g val-ty)
                        UNIT-TYPE
                        (error 'type-check/todo))]
@@ -611,13 +614,13 @@ The type rules for core forms that have interesting type rules
 
 ;(: mvector-length-type-rule (-> Grift-Type Grift-Type))
 (define (mvector-length-type-rule vect-ty)
-  (if (or (MVect? vect-ty) (Dyn? vect-ty))
+  (if (or (MVect? vect-ty) (Dyn? vect-ty) (Any? vect-ty))
       INT-TYPE
       (error 'type-check/todo)))
 
 ;(: gvector-length-type-rule (-> Grift-Type Grift-Type))
 (define (gvector-length-type-rule vect-ty)
-  (if (or (GVect? vect-ty) (Dyn? vect-ty))
+  (if (or (GVect? vect-ty) (Dyn? vect-ty) (Any? vect-ty))
       INT-TYPE
       (error 'type-check/todo)))
 

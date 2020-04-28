@@ -479,6 +479,13 @@
         (define lbl (mk-label "Application" src rator-src))
         (define exp^ (mk-cast rator-src lbl exp DYN-TYPE needed-rator-type))
         (App exp^ exp*)])]
+    [(Any n) ; TODO is this right?
+        (define-values (exp* ty*) (ic-operands rand*))
+        (define needed-rator-type (Fn (length ty*) ty* DYN-TYPE))
+        (define exp (ic-expr rator))
+        (define lbl (mk-label "Application" src rator-src))
+        (define exp^ (mk-cast rator-src lbl exp DYN-TYPE needed-rator-type))
+        (App exp^ exp*)]
     [(Fn _ dom _)
      (define exp* (map (ic-operand/cast src) rand* dom))
      (App (ic-expr rator) exp*)]))

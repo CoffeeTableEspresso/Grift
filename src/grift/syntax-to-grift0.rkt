@@ -189,7 +189,7 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
      (define tys  (map (parse-optional-type env) (syntax->list #'(bnd.ty  ...))))
      (define rhss (map (parse-form env) (syntax->list #'(bnd.rhs ...))))
      (Let (map Bnd uids tys rhss)
-      ((parse-form new-env) (syntax/loc stx (begin e* ... body))))]))
+          ((parse-form new-env) (syntax/loc stx (begin e* ... body))))]))
 
 (define (parse-letrec-expression stx env)
   (syntax-parse stx
@@ -199,7 +199,7 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
      (define tys  (map (parse-optional-type env) (syntax->list #'(bnd.ty  ...))))
      (define rhss (map (parse-form new-env) (syntax->list #'(bnd.rhs ...))))
      (Letrec (map Bnd uids tys rhss)
-       ((parse-form new-env) (syntax/loc stx (begin e* ... body))))]))
+             ((parse-form new-env) (syntax/loc stx (begin e* ... body))))]))
 
 
 (module+ test
@@ -209,12 +209,12 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
   (check-forms=?
    ((parse-form (make-top-level-env)) #'(let ([x 1]) x))
    (Ann (Let (list (Bnd 'x #f (Ann (Quote 1) (quote-srcloc))))
-          (Ann (Var 'x) (quote-srcloc)))
+             (Ann (Var 'x) (quote-srcloc)))
         (quote-srcloc)))
   (check-forms=?
    ((parse-form (make-top-level-env)) #'(letrec ([x x]) x))
    (Ann (Letrec (list (Bnd 'x #f (Ann (Var 'x) (quote-srcloc))))
-          (Ann (Var 'x) (quote-srcloc)))
+                (Ann (Var 'x) (quote-srcloc)))
         (quote-srcloc))))
 
 (define-splicing-syntax-class optional-colon-type
@@ -223,17 +223,23 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
 (define-splicing-syntax-class optionally-annotated-id
   [pattern (~seq id:id oa:optional-colon-type) #:with ty #'oa.ty])
 
+(define counter
+  (let ([n 0])
+    (lambda ()
+      (set! n (add1 n))
+      n)))
+
 (define-syntax-class formal-parameter
   [pattern [var:id (~datum :) ty]]
-  [pattern var:id #:with ty #'Dyn])
+  [pattern var:id #:with ty #'(Any)])
 
 (define (parse-define-form stx env)
   (define (help rec? id ty? body)
     (Define
-      rec?
-      ((env-get-lexical 'parse-define-form) env id)
-      ((parse-optional-type env) ty?)
-      ((parse-form env) body)))
+     rec?
+     ((env-get-lexical 'parse-define-form) env id)
+     ((parse-optional-type env) ty?)
+     ((parse-form env) body)))
   (debug stx env)
   (syntax-parse stx
     [(_ v:optionally-annotated-id e:expr)
@@ -251,25 +257,25 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
      (define (pt s) (parse-type s env))
      (define tys  (map pt (syntax->list #'(fml.ty  ...))))
      (Lambda (map Fml uids tys)
-       (list ((parse-form new-env) (syntax/loc stx (begin e* ... body)))
-             ((parse-optional-type new-env) #'r.ty)))]
+             (list ((parse-form new-env) (syntax/loc stx (begin e* ... body)))
+                   ((parse-optional-type new-env) #'r.ty)))]
     [other (error 'parse-lambda "unmatched ~a" (syntax->datum stx))]))
 
 (module+ test
   (check-forms=?
    ((parse-form (make-top-level-env)) #'(lambda (x y) x))
    (Ann (Lambda (list (Fml 'x (Dyn)) (Fml 'y (Dyn)))
-          (list (Ann (Var 'x) (quote-srcloc)) #f))
+                (list (Ann (Var 'x) (quote-srcloc)) #f))
         (quote-srcloc)))
   (check-forms=?
    ((parse-form (make-top-level-env)) #'(lambda ([x : Int]) x))
    (Ann (Lambda (list (Fml 'x (Int)))
-          (list (Ann (Var 'x) (quote-srcloc)) #f))
+                (list (Ann (Var 'x) (quote-srcloc)) #f))
         (quote-srcloc)))
   (check-forms=?
    ((parse-form (make-top-level-env)) #'(lambda ([x : Int]) : Int x))
    (Ann (Lambda (list (Fml 'x (Int)))
-          (list (Ann (Var 'x) (quote-srcloc)) (Int)))
+                (list (Ann (Var 'x) (quote-srcloc)) (Int)))
         (quote-srcloc))))
 
 (define (parse-op stx env)
@@ -328,9 +334,9 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
      (define new-env (env-extend* env #'i.id i #'a.id a))
      (define recur (parse-form env))
      (Repeat i (recur #'i.start) (recur #'i.stop)
-       (list a ((parse-optional-type env) #'a.type))
-       ((parse-form env) #'a.init)
-       ((parse-form new-env) #'M))]))
+             (list a ((parse-optional-type env) #'a.type))
+             ((parse-form env) #'a.init)
+             ((parse-form new-env) #'M))]))
 
 (define (parse-switch stx env)
   (define-syntax-class switch-clause
@@ -386,9 +392,9 @@ whatsoever identifiers maintain lexical scope according to symbolic equality.
      (define tmp (next-uid! "tmp_s2s0"))
      (begin (op 'timer-start)
             (Let (list (Bnd tmp #f ((parse-form env) #'exp)))
-              (/src (begin (op 'timer-stop)
-                           (op 'timer-report)
-                           (Var tmp)))))]))
+                 (/src (begin (op 'timer-stop)
+                              (op 'timer-report)
+                              (Var tmp)))))]))
 
 (define (parse-and stx env)
   ;; this should be implemented as a macro once we have an expander
@@ -497,6 +503,9 @@ represents types in the grift abstract syntax tree.
     [other (syntax-error sym "invalid syntax" stx)]))
 
 
+(define (parse-any-type stx env)
+  (Any (counter)))
+
 (define (parse-tuple-type stx env)
   (define (map-type s) (parse-type s env))
   (syntax-parse stx
@@ -522,7 +531,7 @@ represents types in the grift abstract syntax tree.
                 (Fn 1 `(,(Fn 0 '() BOOL-TYPE)) (Fn 0 '() INT-TYPE)))
   (check-exn exn? (lambda () (parse-type #'(-> Int Int))))
   (check-exn exn? (lambda () (parse-type #'(-> (-> Bool Int)))))
-   (check-equal? (parse-type #'Unit)
+  (check-equal? (parse-type #'Unit)
                 UNIT-TYPE)
   (check-equal? (parse-type #'(Tuple))
                 UNIT-TYPE)
@@ -570,6 +579,7 @@ represents types in the grift abstract syntax tree.
      (Bool       . ,(core-atomic BOOL-TYPE))
      (Unit       . ,(core-atomic UNIT-TYPE))
      (Dyn        . ,(core-atomic DYN-TYPE))
+     (Any        . ,(core parse-any-type))
      (Float      . ,(core-atomic FLOAT-TYPE))
      (Tuple      . ,(core parse-tuple-type))
      (Rec        . ,(core parse-mu-type))
