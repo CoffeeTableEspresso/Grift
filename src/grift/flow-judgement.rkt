@@ -293,10 +293,13 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
          (set! new-casts (set-add new-casts (FromTo (GRef (Dyn)) to)))]
         [(and (Dyn? from) (MRef? to))        ; F-ExpBoxL
          (set! new-casts (set-add new-casts (FromTo (MRef (Dyn)) to)))]
-        [(and (Dyn? from) (GVect? to))     ; F-ExpVectL
+        [(and (Dyn? from) (GVect? to))       ; F-ExpVectL
          (set! new-casts (set-add new-casts (FromTo (GVect (Dyn))) to))]
-        [(and (Dyn? from) (MVect? to))     ; F-ExpVectL
+        [(and (Dyn? from) (MVect? to))       ; F-ExpVectL
          (set! new-casts (set-add new-casts (FromTo (MVect (Dyn))) to))]
+        [(and (Dyn? from) (STuple? to))      ; F-ExpTupL
+         (define n (STuple-num to))
+         (set! new-casts (set-add new-casts (FromTo (STuple n (build-list n (lambda (x) (Dyn)))) to)))]
         [(and (Fn? from) (Dyn? to))          ; F-ExpFunR
          (define n (length (Fn-fmls from)))
          (set! new-casts (set-add new-casts (FromTo from (Fn n (build-list n (lambda (i) (Dyn))) (Dyn)))))]
@@ -304,10 +307,13 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
          (set! new-casts (set-add new-casts (FromTo from (GRef (Dyn)))))]
         [(and (MRef? from) (Dyn? to))        ; F-ExpBoxR
          (set! new-casts (set-add new-casts (FromTo from (MRef (Dyn)))))]
-        [(and (GVect? from) (Dyn? to))     ; F-ExpVectR
+        [(and (GVect? from) (Dyn? to))       ; F-ExpVectR
          (set! new-casts (set-add new-casts (FromTo from (GVect (Dyn)))))]
-        [(and (MVect? from) (Dyn? to))     ; F-ExpVectR
+        [(and (MVect? from) (Dyn? to))       ; F-ExpVectR
          (set! new-casts (set-add new-casts (FromTo from (MVect (Dyn)))))]
+        [(and (STuple? from) (Dyn? to))      ; F-ExpTupR
+         (define n (STuple-num from))
+         (set! new-casts (set-add new-casts (FromTo from (STuple n (build-list n (lambda (x) (Dyn)))))))]
         [(and (Fn? from) (Fn? to) (equal? (Fn-arity to) (Fn-arity from)))  ; F-SplitFun
          (define new-casts-param (list->set (map FromTo (Fn-fmls to) (Fn-fmls from))))
          (define new-cast-ret (FromTo (Fn-ret from) (Fn-ret to)))
@@ -321,6 +327,8 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
          (set! new-casts (set-add new-casts (FromTo (GVect-arg from) (GVect-arg to))))]
         [(and (MVect? from) (MVect? to)) ; F-SplitVect
          (set! new-casts (set-add new-casts (FromTo (MVect-arg from) (MVect-arg to))))]
+        [(and (STuple? from) (STuple? to) (>= (STuple-num to) (STuple-num from)))
+         (set! new-casts (set-union new-casts (list->set (map FromTo (STuple-items to) (STuple-items from)))))]
         ))
     (if (subset? new-casts casts)
         (set-filter (lambda (c) (not (equal? (FromTo-from c)
