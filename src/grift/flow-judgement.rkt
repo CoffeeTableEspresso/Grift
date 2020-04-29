@@ -91,11 +91,28 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (set-union (get-casts args) (get-casts body))]
     [(Op _ operands)
      (get-casts operands)]
+    [(Gbox val)
+     (get-casts val)]
+    [(Gunbox b)
+     (get-casts b)]
+    [(Gbox-set! b val)
+     (set-union (get-casts b) (get-casts val))]
+    [(Create-tuple vals)
+     (get-casts vals)]
+    [(Tuple-proj t idx)
+     (get-casts t)]
+    [(Gvector len val)
+     (set-union (get-casts len) (get-casts val))]
+    [(Gvector-set! vect index val)
+     (get-casts (list vect index val))]
+    [(Dyn-GVector-Ref expr index label)
+     (set-union (get-casts expr) (get-casts index))]
+    [(Dyn-Tuple-Proj tup idx lbl)
+     (set-union (get-casts tup) (get-casts idx))]
     [(App fn args)
      (set-union (get-casts fn) (get-casts args))]
     [(Dyn-Fn-App expr expr* type* label*)
-     (set-union (get-casts expr) (set))
-     ]
+     (set-union (get-casts expr) (set))]
     [(If cond then else)
      (get-casts (list cond then else))]
     [(Begin effects value)
@@ -131,7 +148,7 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
   (define (helper keys)
     (for ([key keys])
       (for ([type (hash-ref inflows key)])
-         (set! types (hash-set types key (type-union type (hash-ref types key))))))
+        (set! types (hash-set types key (type-union type (hash-ref types key))))))
     types)
   (helper (hash-keys inflows)))
 
@@ -142,6 +159,8 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
        (hash-ref types n (Dyn))]  ; If not found, just use Dynamic
       [(Fn n fmls ret)
        (Fn n (map (lambda (t) (replace-type t types)) fmls) (replace-type ret types))]
+      [(STuple len args)
+       (STuple len (map (lambda (t) (replace-type t types)) args))]
       [else type]))
   (match ast
     [(list exprs ...)
@@ -161,6 +180,24 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (Lambda (remove-casts args types) (remove-casts body types))]
     [(Op op operands)
      (Op op (remove-casts operands types))]
+    [(Gbox val)
+     (Gbox (remove-casts val types))]
+    [(Gunbox b)
+     (Gunbox (remove-casts b types))]
+    [(Gbox-set! b val)
+     (Gbox-set! (remove-casts b types)
+                (remove-casts val types))]
+    [(Create-tuple vals)
+     (Create-tuple (remove-casts vals types))]
+    [(Tuple-proj t idx)
+     (Tuple-proj (remove-casts t types) idx)]
+    [(Gvector len val)
+     (Gvector (remove-casts len types)
+              (remove-casts val types))]
+    [(Gvector-set! vect idx val)
+     (Gvector-set! (remove-casts vect types)
+                   (remove-casts idx types)
+                   (remove-casts val types))]
     [(App fn args)
      (App (remove-casts fn types) (remove-casts args types))]
     [(Dyn-Fn-App expr expr* type* label*)
@@ -168,6 +205,14 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
                  (map (lambda (node) (remove-casts node types)) expr*)
                  (map (lambda (t) (replace-type t types)) type*)
                  label*)]
+    [(Dyn-GVector-Ref vect index label)
+     (Dyn-GVector-Ref (remove-casts vect types)
+                      (remove-casts index types)
+                      label)]
+    [(Dyn-Tuple-Proj tup idx lbl)
+     (Dyn-Tuple-Proj (remove-casts tup types)
+                     (remove-casts idx types)
+                     lbl)]
     [(If cond then else)
      (If (remove-casts cond types) (remove-casts then types) (remove-casts else types))]
     [(Begin effects value)
@@ -175,7 +220,7 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     [(Letrec bindings body)
      (Letrec (remove-casts bindings types) (remove-casts body types))]
     [(Cast expr cast)
-    ; (println ast)
+     ; (println ast)
      (define from (Twosome-type1 cast))
      (define to (Twosome-type2 cast))
      (define label (Twosome-lbl cast))
@@ -202,7 +247,7 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
 (define (flow-judgement ast)
   (println "running flow judgement!")
   (define casts (get-casts ast))
- ; (println casts)
+  ; (println casts)
   (define (helper casts)
     (define new-casts (set))
     (define k (set-filter (lambda (c)
@@ -214,20 +259,21 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     (for ([c casts])                             
       (define from (FromTo-from c))
       (define to (FromTo-to c))
+      (println c)
       (cond
         ; F-Base & F-Comp are handled already by how we construct the initial set of casts.
-        [(and (Any? from) (Any? to))
+        [(and (Any? from) (Any? to))       ; F-Pull
          (define (helper kinds)
            (if (set-empty? kinds)
                (set)
                (set-add (helper (set-rest kinds)) (FromTo (set-first kinds) to))
                ))
          (set! new-casts (set-union new-casts (helper (set-map (set-filter (lambda (c)
-                                                                             (equal? (FromTo-to c) from)) k) FromTo-from))))] ; F-Pull
-        [(and (not (Any? from)) (Any? to))
+                                                                             (equal? (FromTo-to c) from)) k) FromTo-from))))] 
+        [(and (not (Any? from)) (Any? to))   ; F-Factor
          (set! new-casts (set-union new-casts (set (FromTo (type-norm from to) to)
-                                                   (FromTo from (type-norm from to)))))] ; F-Factor
-        [(and (Any? from) (not (Any? to)))
+                                                   (FromTo from (type-norm from to)))))]
+        [(and (Any? from) (not (Any? to)))   ; F-Tran
          (define (helper kinds)
            (if (set-empty? kinds)
                (set)
@@ -239,42 +285,42 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
          (define dyn-consistent-kinds (set-filter (lambda (kind)
                                                     (consistent? kind to))
                                                   kinds))
-         (set! new-casts (set-union new-casts (helper dyn-consistent-kinds)))] ; F-Tran
-        [(and (Dyn? from) (Fn? to))
+         (set! new-casts (set-union new-casts (helper dyn-consistent-kinds)))]
+        [(and (Dyn? from) (Fn? to))          ; F-ExpFunL
          (define n (length (Fn-fmls to)))
-         (set! new-casts (set-add new-casts (FromTo (Fn n (build-list n (lambda (i) (Dyn))) (Dyn)) to)))];[] ; F-ExpFunL
-        #;[(and (Dyn? from) (t-obj? to))
-           (define (obj-with-anys o)
-             (define keys (hash-keys (t-obj-pairs o)))
-             (define tmp (hash))
-             (for ([k keys])
-               (set! tmp (hash-union tmp (hash k (t-dyn)))))
-             (t-obj tmp)
-             )
-           (set! new-casts (set-add new-casts (FromTo (obj-with-anys to) to)))] ; F-ExpObjL
-        [(and (Fn? from) (Dyn? to))
+         (set! new-casts (set-add new-casts (FromTo (Fn n (build-list n (lambda (i) (Dyn))) (Dyn)) to)))]
+        [(and (Dyn? from) (GRef? to))        ; F-ExpBoxL
+         (set! new-casts (set-add new-casts (FromTo (GRef (Dyn)) to)))]
+        [(and (Dyn? from) (MRef? to))        ; F-ExpBoxL
+         (set! new-casts (set-add new-casts (FromTo (MRef (Dyn)) to)))]
+        [(and (Dyn? from) (GVect? to))     ; F-ExpVectL
+         (set! new-casts (set-add new-casts (FromTo (GVect (Dyn))) to))]
+        [(and (Dyn? from) (MVect? to))     ; F-ExpVectL
+         (set! new-casts (set-add new-casts (FromTo (MVect (Dyn))) to))]
+        [(and (Fn? from) (Dyn? to))          ; F-ExpFunR
          (define n (length (Fn-fmls from)))
-         (set! new-casts (set-add new-casts (FromTo from (Fn n (build-list n (lambda (i) (Dyn))) (Dyn)))))] ; F-ExpFunR
-        #;[(and (Dyn? to) (t-obj? from))
-           (define (obj-with-anys o)
-             (define keys (hash-keys (t-obj-pairs o)))
-             (define tmp (hash))
-             (for ([k keys])
-               (set! tmp (hash-union tmp (hash k (t-dyn)))))
-             (t-obj tmp)
-             )
-           (set! new-casts (set-add new-casts (FromTo from (obj-with-anys from))))] ; F-ExpObjR
-        [(and (Fn? from) (Fn? to) (equal? (Fn-arity to) (Fn-arity from)))
-         (define new-casts-param (list->set (map FromTo (Fn-fmls from) (Fn-fmls to))))
+         (set! new-casts (set-add new-casts (FromTo from (Fn n (build-list n (lambda (i) (Dyn))) (Dyn)))))]
+        [(and (GRef? from) (Dyn? to))        ; F-ExpBoxR
+         (set! new-casts (set-add new-casts (FromTo from (GRef (Dyn)))))]
+        [(and (MRef? from) (Dyn? to))        ; F-ExpBoxR
+         (set! new-casts (set-add new-casts (FromTo from (MRef (Dyn)))))]
+        [(and (GVect? from) (Dyn? to))     ; F-ExpVectR
+         (set! new-casts (set-add new-casts (FromTo from (GVect (Dyn)))))]
+        [(and (MVect? from) (Dyn? to))     ; F-ExpVectR
+         (set! new-casts (set-add new-casts (FromTo from (MVect (Dyn)))))]
+        [(and (Fn? from) (Fn? to) (equal? (Fn-arity to) (Fn-arity from)))  ; F-SplitFun
+         (define new-casts-param (list->set (map FromTo (Fn-fmls to) (Fn-fmls from))))
          (define new-cast-ret (FromTo (Fn-ret from) (Fn-ret to)))
          (set! new-casts (set-union new-casts new-casts-param))
-         (set! new-casts (set-add new-casts new-cast-ret))] ; F-SplitFun
-        #;[(and (t-obj? from) (t-obj? to) (hash-keys-subset? (t-obj-pairs to) (t-obj-pairs from)))
-           (define to-h (t-obj-pairs to))
-           (define from-h (t-obj-pairs from))
-           (for ([key (hash-keys to-h)])
-             (define new-cast (FromTo (hash-ref from-h key) (hash-ref to-h key)))
-             (set! new-casts (set-add new-casts new-cast)))]  ; F-SplitObj
+         (set! new-casts (set-add new-casts new-cast-ret))] 
+        [(and (GRef? from) (GRef? to))       ; F-SplitBox
+         (set! new-casts (set-add new-casts (FromTo (GRef-arg from) (GRef-arg to))))]
+        [(and (MRef? from) (MRef? to))       ; F-SplitBox
+         (set! new-casts (set-add new-casts (FromTo (MRef-arg from) (MRef-arg to))))]
+        [(and (GVect? from) (GVect? to)) ; F-SplitVect
+         (set! new-casts (set-add new-casts (FromTo (GVect-arg from) (GVect-arg to))))]
+        [(and (MVect? from) (MVect? to)) ; F-SplitVect
+         (set! new-casts (set-add new-casts (FromTo (MVect-arg from) (MVect-arg to))))]
         ))
     (if (subset? new-casts casts)
         (set-filter (lambda (c) (not (equal? (FromTo-from c)
@@ -285,5 +331,5 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
   (define inflows (find-inflows new-casts))
   (define types (find-types inflows))
   (define less-casts (remove-casts ast types))
- ; (println less-casts)
+  ; (println less-casts)
   less-casts)
