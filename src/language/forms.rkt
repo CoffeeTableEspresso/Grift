@@ -315,6 +315,11 @@ And a type constructor "name" expecting the types of field1 and field2
 (struct Dyn structural-type ()
   #:transparent)
 (struct Any structural-type (uid) #:transparent)
+(struct AnyParam structural-type (var index) #:transparent) ; index is which paramter it is (0-indexed)
+(struct AnyReturn structural-type (var) #:transparent)
+(struct AnyVect structural-type (var) #:transparent)
+(struct AnyTup structural-type (var index) #:transparent) ; 0-indexed
+
 (struct Fn structural-type (arity fmls ret) #:transparent)
 (struct MRef structural-type (arg)
   #:transparent)

@@ -8,6 +8,9 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
 
 (provide flow-judgement)
 
+(module+ test
+  (require rackunit))
+
 (define (set-filter proc s)
   (cond
     [(set-empty? s) (set)]
@@ -18,24 +21,29 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
   (+ 1 n))
 
 (struct FromTo (from to) #:transparent)
-(struct AnyParam (var index) #:transparent) ; index is which paramter it is
-(struct AnyReturn (var) #:transparent)
-(struct AnyField (var key) #:transparent) ; key is which field is being accessed from the obj
 
 (define (any? var)
   (or (Any? var)
       (AnyParam? var)
       (AnyReturn? var)
-      (AnyField? var)))
+      (AnyVect? var)
+      (AnyTup? var)))
 
 (define (type-norm type var)
-  (define (fn-type-norm arity params ret)
+  (define (fn-type-norm arity params)
     (define counter
-      (let ([n 0])
+      (let ([n -1])
         (lambda ()
           (set! n (1+ n))
           n)))
     (Fn arity (map (lambda (x) (AnyParam var (counter))) params) (AnyReturn var)))
+  (define (tup-type-norm len)
+    (define counter
+      (let ([n -1])
+        (lambda ()
+          (set! n (1+ n))
+          n)))
+    (STuple len (map (lambda (x) (AnyTup var (counter))) (make-list len #f))))
   (match type
     [(Dyn) (Dyn)]
     [(Unit) (Unit)]
@@ -46,8 +54,33 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     [(Float) (Float)]
     [(Bool) (Bool)]
     [(Character) (Character)]
-    [(Fn arity params ret) (fn-type-norm arity params ret)]
-    [else 'TODO]))
+    [(Fn arity params _) (fn-type-norm arity params)]
+    [(GVect _) (GVect (AnyVect var))]
+    [(STuple len _) (tup-type-norm len)]
+    [else (error "TODO: implement type-norm for ~a and ~a" type var)]))
+
+(module+ test
+  (test-equal? "shape of Dyn is Dyn"
+               (type-norm (Dyn) (Any 1))
+               (Dyn))
+  (test-equal? "shape of primitives is themselves"
+               (type-norm (Int) (Any 1))
+               (Int))
+  (test-equal? "shape of functions is a function type with the same type"
+               (type-norm (Fn 2 (list (Int) (Bool)) (Character)) (Any 1))
+               (Fn 2
+                   (list (AnyParam (Any 1) 0)
+                         (AnyParam (Any 1) 1))
+                   (AnyReturn (Any 1))))
+  (test-equal? "shape of vectors is a vector indexed with the same type"
+               (type-norm (GVect (Int)) (Any 2))
+               (GVect (AnyVect (Any 2))))
+  (test-equal? "shape of tuples is a tuple indexed with the same types"
+               (type-norm (STuple 3 (list (Bool) (Int) (Dyn))) (Any 4))
+               (STuple 3 (list (AnyTup (Any 4) 0)
+                               (AnyTup (Any 4) 1)
+                               (AnyTup (Any 4) 2))))
+  )
 
 (define (kindof? type var)
   (define (fn-kindof? cnt args ret var)
@@ -59,6 +92,14 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
                          (rest args)
                          ret
                          var))))
+  (define (tup-kindof? cnt items var)
+    (if (empty? items)
+        #t
+        (and (equal? (first items)
+                     (AnyTup var cnt))
+             (tup-kindof? (1+ cnt)
+                          (rest items)
+                          var))))
   (match type
     [(Unit) #t]
     [(Dyn) #t]
@@ -69,8 +110,49 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     [(Float) #t]
     [(Bool) #t]
     [(Character) #t]
-    [(Fn arity params ret) (fn-kindof? 1 params ret var)]
-    [else #f])) ; TODO rest of these
+    [(Fn _ params ret) (fn-kindof? 0 params ret var)]
+    [(GVect vect-type) (equal? vect-type (AnyVect var))]
+    [(STuple _ items) (tup-kindof? 0 items var)]
+    [else #f]))
+
+(module+ test
+  (test-equal? "Dyn matches everything"
+               (kindof? (Dyn) (Any 1))
+               #t)
+  (test-equal? "Primitives also match, trivially"
+               (kindof? (Int) (Any 1))
+               #t)
+  (test-equal? "Function"
+               (kindof? (Fn 1 (list (AnyParam (Any 1) 0)) (AnyReturn (Any 1))) (Any 1))
+               #t)
+  (test-equal? "Function"
+               (kindof? (Fn 1 (list (AnyParam (Any 2) 0)) (AnyReturn (Any 1))) (Any 1))
+               #f)
+  (test-equal? "Function"
+               (kindof? (Fn 1 (list (AnyParam (Any 1) 2)) (AnyReturn (Any 1))) (Any 1))
+               #f)
+  (test-equal? "Function"
+               (kindof? (Fn 1 (list (AnyParam (Any 1) 0)) (AnyReturn (Any 2))) (Any 1))
+               #f)
+  (test-equal? "Vector"
+               (kindof? (GVect (AnyVect (Any 1))) (Any 1))
+               #t)
+  (test-equal? "Vector"
+               (kindof? (GVect (AnyVect (Any 1))) (Any 2))
+               #f)
+  (test-equal? "Tuple"
+               (kindof? (STuple 3 (list (AnyTup (Any 1) 0)
+                                        (AnyTup (Any 1) 1)
+                                        (AnyTup (Any 1) 2)))
+                        (Any 1))
+               #t)
+  (test-equal? "Tuple"
+               (kindof? (STuple 3 (list (AnyTup (Any 1) 0)
+                                        (AnyTup (Any 2) 1)
+                                        (AnyTup (Any 1) 2)))
+                        (Any 1))
+               #f)
+  )
 
 (define (get-casts ast)
   (match ast
@@ -80,11 +162,15 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (set-union (get-casts first) (get-casts second))]
     [(Prog _ expr)
      (get-casts expr)]
+    [(Define _ _ _ expr)
+     (get-casts expr)]
     [(Uid _ _) (set)]
     [(Var _) (set)]
     [(Quote _) (set)]
     [(Observe expr _)
      (get-casts expr)]
+    [(Repeat var start end acc init body)
+     (get-casts (list var start end acc init body))]
     [(Let bindings body)
      (set-union (get-casts bindings) (get-casts body))]
     [(Lambda args body)
@@ -105,8 +191,12 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (set-union (get-casts len) (get-casts val))]
     [(Gvector-set! vect index val)
      (get-casts (list vect index val))]
+    [(Gvector-ref vect idx)
+     (set-union (get-casts vect) (get-casts idx))]
     [(Dyn-GVector-Ref expr index label)
      (set-union (get-casts expr) (get-casts index))]
+    [(Dyn-GVector-Set! expr1 index expr2 type label)
+     (get-casts (list expr1 expr2 index))]
     [(Dyn-Tuple-Proj tup idx lbl)
      (set-union (get-casts tup) (get-casts idx))]
     [(App fn args)
@@ -134,31 +224,135 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
          (hash-set rest-casts n (set-add (hash-ref rest-casts n (set)) from))]
         [else (find-inflows (set-rest casts))])))
 
+(module+ test
+  (test-equal? "Basic example with 1 variable"
+               (find-inflows (set (FromTo (Any 2) (Int))
+                                  (FromTo (Int) (Any 1))
+                                  (FromTo (Any 1) (Any 2))
+                                  (FromTo (Bool) (Any 1))))
+               (hash 1 (set (Int) (Bool)) 2 (set (Any 1))))
+  (test-equal? "Basic example with 1 variable"
+               (find-inflows (set (FromTo (Any 2) (Int))
+                                  (FromTo (Any 2) (Any 1))
+                                  (FromTo (Dyn) (Any 1))
+                                  (FromTo (Any 1) (Any 2))
+                                  (FromTo (Bot) (Any 1))))
+               (hash 1 (set (Bot) (Dyn) (Any 2)) 2 (set (Any 1)))))
+
 (define (type-union left right)
   (match (cons left right)
+    [(cons t t) t] ; for primitives
     [(cons (Bot) t) t]
     [(cons t (Bot)) t]
     [(cons (Dyn) _) (Dyn)]
     [(cons _ (Dyn)) (Dyn)]
-    [else (error 'TODO)]))
+    [(cons (Fn n args1 ret1) (Fn n args2 ret2))       ; same arity
+     (define new (Fn n (map type-union args1 args2) (type-union ret1 ret2)))
+     new]
+    [(cons (Fn a1 args1 ret1) (Fn a2 args2 ret2))     ; different arities
+     (Dyn)]
+    [(cons (GVect t1) (GVect t2))
+     (GVect (type-union t1 t2))]
+    [else (Dyn)]))   ; by default, dynamic. This should match all the cases where things fell through and didn't match anything else.
+
+(module+ test
+  (test-equal? "Bottom and anything"
+               (type-union (Bot) (Int))
+               (Int))
+  (test-equal? "Dyn and whatever"
+               (type-union (Dyn) (Bot))
+               (Dyn))
+  (test-equal? "Fn"
+               (type-union (Fn 2 (list (Dyn) (Bot)) (Int))
+                           (Fn 2 (list (Int) (Bool)) (Int)))
+               (Fn 2 (list (Dyn) (Bool)) (Int)))
+  (test-equal? "Fn different arity"
+               (type-union (Fn 0 '() (Bool))
+                           (Fn 1 (list (Int)) (Bool)))
+               (Dyn)))
 
 (define (find-types inflows)
+  (define (uses-any? type key)
+    (match type
+      [(Any n) (equal? key n)]
+      [(AnyParam v _) (uses-any? v key)]
+      [(AnyReturn v) (uses-any? v key)]
+      [(AnyVect v) (uses-any? v key)]
+      [(AnyTup v _) (uses-any? v key)]
+      [else #f]))
+  (define (replacement t key)
+    (match t
+      [(Any (? (lambda (n) (equal? n key)))) (Dyn)]
+      [(Any n) (hash-ref types n (Dyn))]
+      [(AnyParam var idx)
+       (define var-type (replacement var key))
+       (if (Fn? var-type)
+           (list-ref (Fn-fmls var-type) idx)
+           (Dyn))]
+      [(AnyReturn var)
+       (define var-type (replacement var key))
+       (if (Fn? var-type)
+           (Fn-ret var-type)
+           (Dyn))]
+      [(AnyVect var)
+       (define var-type (replacement var key))
+       (if (GVect? var-type)
+           (GVect-arg var-type)
+           (Dyn))]
+      [(? any?) (error "implement for ~a" t)]
+      ; TODO Any... variants
+      [(Fn arity args ret) (Fn arity (map (lambda (x) (replacement x key)) args) (replacement ret key))]
+      [(GVect v) (GVect (replacement v key))]
+      [(STuple num items) (STuple num (map (lambda (x) (replacement x key)) items))]
+      [else t]))
   (define types (make-immutable-hash (map (lambda (key) `(,key . ,(Bot))) (hash-keys inflows))))
-  types
-  (define (helper keys)
+  (define keys (hash-keys inflows))
+  (define (helper old)
     (for ([key keys])
       (for ([type (hash-ref inflows key)])
-        (set! types (hash-set types key (type-union type (hash-ref types key))))))
-    types)
-  (helper (hash-keys inflows)))
+        (set! types (hash-set types key (type-union (replacement type key) (hash-ref types key))))))
+    (if (equal? old types)
+        types
+        (helper types)))
+  (helper types))
+
+(module+ test
+  #;(test-equal? "Cycle"
+                 (find-types (hash 1 (set (Any 2) (Fn 0 '() (Int))) 2 (set (Any 1) (Fn 0 '() (Bool)))))
+                 (hash 1 (Fn 0 '() (Dyn)) 2 (Fn 0 '() (Dyn))))
+  (test-equal? "Self-referential"
+               (find-types (hash 1 (set (Fn 2 (list (Any 1) (Any 2)) (Int))
+                                        (Fn 2 (list (AnyParam (Any 1) 0) (AnyParam (Any 1) 1)) (AnyReturn (Any 1)))
+                                        (AnyParam (Any 1) 0))
+                                 2 (set (Int) (AnyParam (Any 1) 1))))
+               (hash 1 (Fn 2 (list (Dyn) (Int)) (Int)) 2 (Int)))
+  (test-equal? "Self-referential"
+               (find-types (hash 1 (set (Fn 2 (list (Any 1) (Any 2)) (Int))
+                                        (Fn 2 (list (AnyParam (Any 1) 0) (AnyParam (Any 1) 1)) (AnyReturn (Any 1)))
+                                        (AnyParam (Any 1) 0))
+                                 2 (set (Int))))
+               (hash 1 (Dyn) 2 (Int)))
+  )
 
 (define (remove-casts ast types)
   (define (replace-type type types)
     (match type
       [(Any n)
        (hash-ref types n (Dyn))]  ; If not found, just use Dynamic
+      [(AnyParam v idx)
+       (define var (hash-ref types v (Dyn)))
+       (if (not (Fn? var))
+           (Dyn)
+           (list-ref (Fn-fmls var) idx))]
+      [(AnyVect v)
+       (define var (hash-ref types v (Dyn)))
+       (if (GVect? var)
+           (GVect-arg var)
+           (Dyn))]
+      [(? any?) (error type)]
       [(Fn n fmls ret)
        (Fn n (map (lambda (t) (replace-type t types)) fmls) (replace-type ret types))]
+      [(GVect t) (GVect (replace-type t types))]
       [(STuple len args)
        (STuple len (map (lambda (t) (replace-type t types)) args))]
       [else type]))
@@ -169,6 +363,15 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (cons (remove-casts first types) (remove-casts second types))]
     [(Prog a expr)
      (Prog a (remove-casts expr types))]
+    [(Define rec? id type expr)
+     (Define rec? id type (remove-casts expr types))]
+    [(Repeat var start end acc init body)
+     (Repeat (remove-casts var types)
+             (remove-casts start types)
+             (remove-casts end types)
+             (remove-casts acc types)
+             (remove-casts init types)
+             (remove-casts body types))]
     [(Uid _ _) ast]
     [(Var _) ast]
     [(Quote _) ast]
@@ -198,8 +401,27 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
      (Gvector-set! (remove-casts vect types)
                    (remove-casts idx types)
                    (remove-casts val types))]
+    [(Gvector-ref vect idx)
+     (Gvector-ref (remove-casts vect types)
+                  (remove-casts idx types))]
     [(App fn args)
      (App (remove-casts fn types) (remove-casts args types))]
+    [(Dyn-GVector-Set! expr1 index expr2 type label)
+     ;(println "Dyn")
+     ;(println expr1)
+     ;(println expr2)
+     ;(println index)
+     ;(println label)
+     (println (Dyn-GVector-Set! (remove-casts expr1 types)
+                       (remove-casts index types)
+                       (remove-casts expr2 types)
+                       (replace-type type types)
+                       label))
+     (Dyn-GVector-Set! (remove-casts expr1 types)
+                       (remove-casts index types)
+                       (remove-casts expr2 types)
+                       (replace-type type types)
+                       label)]
     [(Dyn-Fn-App expr expr* type* label*)
      (Dyn-Fn-App (remove-casts expr types)
                  (map (lambda (node) (remove-casts node types)) expr*)
@@ -220,34 +442,14 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     [(Letrec bindings body)
      (Letrec (remove-casts bindings types) (remove-casts body types))]
     [(Cast expr cast)
-     ; (println ast)
-     (define from (Twosome-type1 cast))
-     (define to (Twosome-type2 cast))
+     (define from (replace-type (Twosome-type1 cast) types))
+     (define to (replace-type (Twosome-type2 cast) types))
      (define label (Twosome-lbl cast))
-     (cond
-       [(Any? from)
-        (define from-any (hash-ref types (Any-uid from) (Dyn)))
-        (if (equal? from-any to)
-            (remove-casts expr types)
-            (Cast (remove-casts expr types) (Twosome (replace-type from-any types)
-                                                     (replace-type to types)
-                                                     label)))]
-       [(Any? to)
-        (define to-any (hash-ref types (Any-uid to) (Dyn)))
-        (if (equal? from to-any)
-            (remove-casts expr types)
-            (Cast (remove-casts expr types) (Twosome (replace-type from types)
-                                                     (replace-type to-any types)
-                                                     label)))]
-       [else (Cast (remove-casts expr types) (Twosome (replace-type from types)
-                                                      (replace-type to types)
-                                                      label))])]
+     (Cast (remove-casts expr types)
+           (Twosome from to label))]
     [else (error ast)]))
 
-(define (flow-judgement ast)
-  (println "running flow judgement!")
-  (define casts (get-casts ast))
-  ; (println casts)
+(define (flow-judgement-helper casts)
   (define (helper casts)
     (define new-casts (set))
     (define k (set-filter (lambda (c)
@@ -259,7 +461,6 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
     (for ([c casts])                             
       (define from (FromTo-from c))
       (define to (FromTo-to c))
-      (println c)
       (cond
         ; F-Base & F-Comp are handled already by how we construct the initial set of casts.
         [(and (Any? from) (Any? to))       ; F-Pull
@@ -270,10 +471,10 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
                ))
          (set! new-casts (set-union new-casts (helper (set-map (set-filter (lambda (c)
                                                                              (equal? (FromTo-to c) from)) k) FromTo-from))))] 
-        [(and (not (Any? from)) (Any? to))   ; F-Factor
+        [(and (not (any? from)) (any? to))   ; F-Factor
          (set! new-casts (set-union new-casts (set (FromTo (type-norm from to) to)
                                                    (FromTo from (type-norm from to)))))]
-        [(and (Any? from) (not (Any? to)))   ; F-Tran
+        [(and (any? from) (not (any? to)))   ; F-Tran
          (define (helper kinds)
            (if (set-empty? kinds)
                (set)
@@ -294,9 +495,9 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
         [(and (Dyn? from) (MRef? to))        ; F-ExpBoxL
          (set! new-casts (set-add new-casts (FromTo (MRef (Dyn)) to)))]
         [(and (Dyn? from) (GVect? to))       ; F-ExpVectL
-         (set! new-casts (set-add new-casts (FromTo (GVect (Dyn))) to))]
+         (set! new-casts (set-add new-casts (FromTo (GVect (Dyn)) to)))]
         [(and (Dyn? from) (MVect? to))       ; F-ExpVectL
-         (set! new-casts (set-add new-casts (FromTo (MVect (Dyn))) to))]
+         (set! new-casts (set-add new-casts (FromTo (MVect (Dyn)) to)))]
         [(and (Dyn? from) (STuple? to))      ; F-ExpTupL
          (define n (STuple-num to))
          (set! new-casts (set-add new-casts (FromTo (STuple n (build-list n (lambda (x) (Dyn)))) to)))]
@@ -335,9 +536,19 @@ Implementation of flow judgement ("Ins and Outs of Gradual Type inference")
                                              (FromTo-to c)))) casts)
         (helper (set-union new-casts casts))))
   (define new-casts (helper casts))
-  ; (println new-casts)
+  new-casts)
+
+(define (flow-judgement ast)
+  (println "running flow judgement!")
+  ;(println ast)
+  (define casts (get-casts ast))
+  ;(println casts)
+  (define new-casts (flow-judgement-helper casts))
+  ;(println new-casts)
   (define inflows (find-inflows new-casts))
+  ;(println inflows)
   (define types (find-types inflows))
+  ;(println types)
   (define less-casts (remove-casts ast types))
-  ; (println less-casts)
+  ;(println less-casts)
   less-casts)

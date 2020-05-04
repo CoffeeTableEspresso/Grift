@@ -152,7 +152,7 @@
      (debug who t1 t2 c)]))
 
 (: ic-expr : G1-Ann-Expr -> C0-Expr)
-(define (ic-expr exp^)
+ (define (ic-expr exp^)
   (match-define (Ann exp (cons src (app unfold-possible-mu type))) exp^)
   (match exp
     [(Lambda fml* (and (Ann _ (cons body-src body-type))
@@ -281,6 +281,9 @@
          [(Dyn? i-ty)
           (define lbl (mk-label "gvector-ref index" i-src))
           (mk-cast i-src lbl i i-ty INT-TYPE)]
+         [(Any? i-ty)
+          (define lbl (mk-label "gvector-ref index" i-src))
+          (mk-cast i-src lbl i i-ty INT-TYPE)]
          [else i]))
      (cond 
        [(Dyn? e1-ty)
@@ -293,6 +296,10 @@
            (Gvector-set! (mk-cast e1-src lbl1 e1 DYN-TYPE (GVect DYN-TYPE))
                          i-exp
                          (mk-cast e2-src lbl2 e2 e2-ty DYN-TYPE))])]
+       [(Any? e1-ty)
+          (Gvector-set! (mk-cast e1-src lbl1 e1 e1-ty (GVect (AnyVect e1-ty)))
+                         i-exp
+                         (mk-cast e2-src lbl2 e2 e2-ty (AnyVect e1-ty)))]
        [else
         (Gvector-set! e1 i-exp (mk-cast e2-src lbl2 e2 e2-ty (GVect-arg e1-ty)))])]
     [(Mbox (app ic-expr e) t) (Mbox e t)]

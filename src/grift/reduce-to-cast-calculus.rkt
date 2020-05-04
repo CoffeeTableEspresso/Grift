@@ -13,6 +13,7 @@ of the cast calculus.
  "./syntax-to-grift0.rkt"
  "./type-check.rkt"
  "../language/contracts.rkt"
+ "../language/forms.rkt"
  "./flow-judgement.rkt")
 
 (provide reduce-to-cast-calculus)
@@ -20,6 +21,13 @@ of the cast calculus.
 (define (reduce-to-cast-calculus path)
   (flow-judgement (insert-casts ((optionally-contract type-check) (syntax->grift0 (read path))))))
 
+(module+ test
+  (require rackunit))
 
-
-
+(module+ test
+  (test-equal? "simple example with ackk"
+              (Prog-expression (flow-judgement (insert-casts ((optionally-contract type-check) (syntax->grift0 (read "../../tests/suite/program/ack-3-10-hybrid1.grift"))))))
+              (Prog-expression (insert-casts ((optionally-contract type-check) (syntax->grift0 (read "../../tests/suite/program/ack-3-10-hybrid1.grift.ann"))))))
+  (test-equal? "no annotations example with ack"
+              (Prog-expression (flow-judgement (insert-casts ((optionally-contract type-check) (syntax->grift0 (read "../../tests/suite/program/ack-3-10-int.grift"))))))
+              (Prog-expression (insert-casts ((optionally-contract type-check) (syntax->grift0 (read "../../tests/suite/program/ack-3-10-hybrid1.grift.ann")))))))

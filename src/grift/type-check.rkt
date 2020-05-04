@@ -513,7 +513,9 @@ The type rules for core forms that have interesting type rules
   (match ty
     [(Dyn) DYN-TYPE]
     [(GRef g) g]
-    [otherwise (error 'type-check/todo)]))
+    [otherwise
+     (println ty)
+     (error 'type-check/todo)]))
 
 ;; The type of setting a reference is always unit
 ;(: gbox-set!-type-rule (-> Grift-Type Grift-Type Grift-Type))
@@ -555,8 +557,8 @@ The type rules for core forms that have interesting type rules
     [(Dyn) UNIT-TYPE]
     [(MRef m) (if (consistent? m val-ty)
                   UNIT-TYPE
-                  (error 'type-check/todo))]
-    [otherwise (error 'type-check/todo)]))
+                  (error 'type-check/todo m val-ty))]
+    [otherwise (error 'type-check/todo box-ty)]))
 
 ;(: mbox-val-type (-> Grift-Type Grift-Type))
 (define (mbox-val-type box-ty)
@@ -571,7 +573,7 @@ The type rules for core forms that have interesting type rules
 (define (gvector-type-rule size-ty init-ty)
   (if (consistent? size-ty INT-TYPE)
       (GVect init-ty)
-      (error 'type-check/todo)))
+      (error 'type-check/todo size-ty init-ty)))
 
 ;; The type of reffing into an Dyn is Dyn
 ;; The type of reffing into a Vect T is T
@@ -581,9 +583,10 @@ The type rules for core forms that have interesting type rules
   (if (consistent? index-ty INT-TYPE)
       (match vect-ty
         [(Dyn) DYN-TYPE]
+        [(Any n) (AnyVect (Any n))]
         [(GVect g) g]
-        [otherwise (error 'type-check/todo)])
-      (error 'type-check/todo)))
+        [otherwise (error 'type-check/todo vect-ty)])
+      (error 'type-check/todo index-ty)))
 
 ;; The type of setting a guarded vector of type T is the type of
 ;; The new value as long as the new value is consistent with the old value
@@ -599,9 +602,9 @@ The type rules for core forms that have interesting type rules
         [(Any _) UNIT-TYPE]
         [(GVect g) (if (consistent? g val-ty)
                        UNIT-TYPE
-                       (error 'type-check/todo))]
-        [otherwise (error 'type-check/todo)])
-      (error 'type-check/todo)))
+                       (error 'type-check/todo g val-ty))]
+        [otherwise (error 'type-check/todo vect-ty)])
+      (error 'type-check/todo index-ty)))
 
 
 ;; The type of creating an array is Vect of the type of the initializing argument
